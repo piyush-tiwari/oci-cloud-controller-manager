@@ -63,7 +63,7 @@ spec:
             - --endpoint=unix://var/run/shared-tmpfs/csi.sock
           command:
             - /usr/local/bin/oci-csi-controller-driver
-          image: ghcr.io/piyush-tiwari/cloud-provider-oci:v1.22.1-alpha1
+          image: ghcr.io/piyush-tiwari/cloud-provider-oci:v1.22.1-alpha3
           imagePullPolicy: IfNotPresent
           volumeMounts:
             - name: config
