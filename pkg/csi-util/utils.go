@@ -43,7 +43,7 @@ const (
 	ociVolumeBackupID = "volume.beta.kubernetes.io/oci-volume-source"
 
 	// Block Volume Performance Units
-	VpusPerGB = "vpusPerGB"
+	VpusPerGB                 = "vpusPerGB"
 	LowCostPerformanceOption  = 0
 	BalancedPerformanceOption = 10
 	HigherPerformanceOption   = 20

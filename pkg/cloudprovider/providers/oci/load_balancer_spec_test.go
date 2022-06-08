@@ -3599,7 +3599,7 @@ func Test_getHealthChecker(t *testing.T) {
 				},
 			},
 			expected: nil,
-			err: fmt.Errorf("invalid value for health check interval, should be between %v and %v", LBHealthCheckIntervalMin, LBHealthCheckIntervalMax),
+			err:      fmt.Errorf("invalid value for health check interval, should be between %v and %v", LBHealthCheckIntervalMin, LBHealthCheckIntervalMax),
 		},
 		"lb wrong interval value - greater than max": {
 			service: &v1.Service{
@@ -3610,31 +3610,31 @@ func Test_getHealthChecker(t *testing.T) {
 				},
 			},
 			expected: nil,
-			err: fmt.Errorf("invalid value for health check interval, should be between %v and %v", LBHealthCheckIntervalMin, LBHealthCheckIntervalMax),
+			err:      fmt.Errorf("invalid value for health check interval, should be between %v and %v", LBHealthCheckIntervalMin, LBHealthCheckIntervalMax),
 		},
 		"nlb wrong interval value - lesser than min": {
 			service: &v1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						ServiceAnnotationLoadBalancerType: "nlb",
+						ServiceAnnotationLoadBalancerType:                       "nlb",
 						ServiceAnnotationNetworkLoadBalancerHealthCheckInterval: "3000",
 					},
 				},
 			},
 			expected: nil,
-			err: fmt.Errorf("invalid value for health check interval, should be between %v and %v", NLBHealthCheckIntervalMin, NLBHealthCheckIntervalMax),
+			err:      fmt.Errorf("invalid value for health check interval, should be between %v and %v", NLBHealthCheckIntervalMin, NLBHealthCheckIntervalMax),
 		},
 		"nlb wrong interval value - greater than max": {
 			service: &v1.Service{
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						ServiceAnnotationLoadBalancerType: "nlb",
+						ServiceAnnotationLoadBalancerType:                       "nlb",
 						ServiceAnnotationNetworkLoadBalancerHealthCheckInterval: "3000000",
 					},
 				},
 			},
 			expected: nil,
-			err: fmt.Errorf("invalid value for health check interval, should be between %v and %v", NLBHealthCheckIntervalMin, NLBHealthCheckIntervalMax),
+			err:      fmt.Errorf("invalid value for health check interval, should be between %v and %v", NLBHealthCheckIntervalMin, NLBHealthCheckIntervalMax),
 		},
 	}
 
@@ -3825,10 +3825,10 @@ func Test_getSecurityListManagementMode(t *testing.T) {
 	}
 }
 
-func Test_validateService(t *testing.T){
+func Test_validateService(t *testing.T) {
 	testCases := map[string]struct {
-		service  *v1.Service
-		err error
+		service *v1.Service
+		err     error
 	}{
 		"defaults": {
 			service: &v1.Service{
@@ -3848,7 +3848,7 @@ func Test_validateService(t *testing.T){
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						ServiceAnnotationLoadBalancerType: "nlb",
+						ServiceAnnotationLoadBalancerType:                              "nlb",
 						ServiceAnnotationNetworkLoadBalancerSecurityListManagementMode: "Neither",
 					},
 				},
@@ -3885,7 +3885,7 @@ func Test_validateService(t *testing.T){
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						ServiceAnnotationLoadBalancerType: "nlb",
+						ServiceAnnotationLoadBalancerType:                              "nlb",
 						ServiceAnnotationNetworkLoadBalancerSecurityListManagementMode: "All",
 					},
 				},
@@ -3905,7 +3905,7 @@ func Test_validateService(t *testing.T){
 				},
 				ObjectMeta: metav1.ObjectMeta{
 					Annotations: map[string]string{
-						ServiceAnnotationLoadBalancerType: "nlb",
+						ServiceAnnotationLoadBalancerType:                              "nlb",
 						ServiceAnnotationNetworkLoadBalancerSecurityListManagementMode: "None",
 					},
 				},

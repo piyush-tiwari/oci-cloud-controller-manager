@@ -22,7 +22,7 @@ const (
 	// PVDetach is the OCI metric suffix for PV detach
 	PVDetach = "PV_DETACH"
 	// PVDelete is the OCI metric suffix for PV delete
-	PVDelete= "PV_DELETE"
+	PVDelete = "PV_DELETE"
 	// PVExpand is the OCI metric suffix for PV Expand
 	PVExpand = "PV_EXPAND"
 

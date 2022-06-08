@@ -22,8 +22,8 @@ type NodeCSIOptions struct {
 	Master     string
 	Kubeconfig string
 
-	EnableFssDriver            bool
-	FssEndpoint                string
+	EnableFssDriver bool
+	FssEndpoint     string
 }
 
 type NodeOptions struct {
