@@ -15,8 +15,9 @@
 package e2e
 
 import (
-	storagev1 "k8s.io/api/storage/v1"
 	"time"
+
+	storagev1 "k8s.io/api/storage/v1"
 
 	. "github.com/onsi/ginkgo"
 	csi_util "github.com/oracle/oci-cloud-controller-manager/pkg/csi-util"
@@ -364,3 +365,83 @@ func TestCMEKAttachmentTypeAndEncryptionType(f *framework.CloudProviderFramework
 	f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
 	_ = f.DeleteStorageClass(framework.ClassOCIKMS)
 }
+
+var _ = Describe("CSI backup policy addition tests", func() {
+	f := framework.NewBackupFramework("csi-basic")
+	Context("[cloudprovider][storage][csi][backup-policy]", func() {
+		It("can assign an Oracle-defined backup policy", func() {
+			pvcJig := framework.NewPVCTestJig(f.ClientSet, "csi-backup-policy-oracle-first")
+
+			backupPolicies := pvcJig.GetOracleDefinedBackupPolicies(f.BlockStorageClient)
+			scName := f.CreateStorageClassOrFail("backup-policy-first", "blockvolume.csi.oraclecloud.com",
+				map[string]string{framework.BackupPolicyId: backupPolicies[0]},
+				pvcJig.Labels, "WaitForFirstConsumer", true)
+			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
+			pvcJig.NewPodForCSI("backup-policy-check-first-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
+
+			time.Sleep(60 * time.Second) //waiting for pod to up and running
+
+			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicies[0])
+			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
+			_ = f.DeleteStorageClass("backup-policy-first")
+		})
+
+		It("assigns no backup policy when the parameter is not provided", func() {
+			pvcJig := framework.NewPVCTestJig(f.ClientSet, "csi-backup-policy-none")
+
+			scName := f.CreateStorageClassOrFail("backup-policy-none", "blockvolume.csi.oraclecloud.com", nil, pvcJig.Labels, "WaitForFirstConsumer", true)
+			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
+			pvcJig.NewPodForCSI("backup-policy-check-none-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
+
+			time.Sleep(60 * time.Second) //waiting for pod to up and running
+
+			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, "")
+			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
+			_ = f.DeleteStorageClass("backup-policy-none")
+		})
+
+		It("assigns no backup policy when the provided id is an empty string", func() {
+			pvcJig := framework.NewPVCTestJig(f.ClientSet, "csi-backup-policy-empty")
+
+			scName := f.CreateStorageClassOrFail("backup-policy-empty", "blockvolume.csi.oraclecloud.com",
+				map[string]string{framework.BackupPolicyId: ""},
+				pvcJig.Labels, "WaitForFirstConsumer", true)
+			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
+			pvcJig.NewPodForCSI("backup-policy-check-empty-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
+
+			time.Sleep(60 * time.Second) //waiting for pod to up and running
+
+			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, "")
+			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
+			_ = f.DeleteStorageClass("backup-policy-empty")
+		})
+
+		It("allows volume expansion after policy assignment", func() {
+			var size = "100Gi"
+			pvcJig := framework.NewPVCTestJig(f.ClientSet, "csi-backup-policy-expand")
+
+			backupPolicies := pvcJig.GetOracleDefinedBackupPolicies(f.BlockStorageClient)
+			scName := f.CreateStorageClassOrFail("backup-policy-expand", "blockvolume.csi.oraclecloud.com",
+				map[string]string{framework.BackupPolicyId: backupPolicies[0]},
+				pvcJig.Labels, "WaitForFirstConsumer", true)
+			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
+			podName := pvcJig.NewPodForCSI("backup-policy-check-expand-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
+
+			time.Sleep(60 * time.Second) //waiting for pod to up and running
+			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicies[0])
+
+			expandedPvc := pvcJig.UpdateAndAwaitPVCOrFailCSI(pvc, pvc.Namespace, size, nil)
+
+			time.Sleep(120 * time.Second) //waiting for expanded pvc to be functional
+
+			pvcJig.CheckVolumeCapacity("100Gi", expandedPvc.Name, f.Namespace.Name)
+			pvcJig.CheckFileExists(f.Namespace.Name, podName, "/data", "testdata.txt")
+			pvcJig.CheckFileCorruption(f.Namespace.Name, podName, "/data", "testdata.txt")
+			pvcJig.CheckExpandedVolumeReadWrite(f.Namespace.Name, podName)
+			pvcJig.CheckUsableVolumeSizeInsidePod(f.Namespace.Name, podName)
+			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicies[0])
+			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
+			_ = f.DeleteStorageClass("backup-policy-expand")
+		})
+	})
+})
