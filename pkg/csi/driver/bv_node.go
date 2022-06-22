@@ -299,7 +299,7 @@ func (d BlockVolumeNodeDriver) NodeUnstageVolume(ctx context.Context, req *csi.N
 	}
 
 	if isRawBlockVolume {
-		err = mountHandler.UnmountPath(stagingTargetPathFile)
+		err = mountHandler.UnmountDeviceBindAndDelete(stagingTargetPathFile)
 	} else {
 		err = mountHandler.UnmountPath(req.StagingTargetPath)
 	}
@@ -503,7 +503,14 @@ func (d BlockVolumeNodeDriver) NodeUnpublishVolume(ctx context.Context, req *csi
 		return nil, status.Error(codes.InvalidArgument, "unknown attachment type. supported attachment types are iscsi and paravirtualized")
 	}
 
-	if err := mountHandler.UnmountPath(req.TargetPath); err != nil {
+	var umountErr error
+	if isRawBlockVolume {
+		umountErr = mountHandler.UnmountDeviceBindAndDelete(req.TargetPath)
+	} else {
+		umountErr = mountHandler.UnmountPath(req.TargetPath)
+	}
+
+	if umountErr != nil {
 		logger.With(zap.Error(err)).Error("failed to unmount the target path, error")
 		return nil, status.Error(codes.Internal, err.Error())
 	}
