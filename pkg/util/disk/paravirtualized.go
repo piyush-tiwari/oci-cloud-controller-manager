@@ -96,6 +96,10 @@ func (c *pvMounter) UnmountPath(path string) error {
 	return mount.UnmountPath(c.logger, path, c.mounter)
 }
 
+func (c *pvMounter) UnmountDeviceBindAndDelete(path string) error {
+	return mount.UnmountFileAndDelete(c.logger, path, c.mounter)
+}
+
 func (c *pvMounter) Resize(devicePath string, volumePath string) (bool, error) {
 	safeMounter := &mount.SafeFormatAndMount{
 		Interface: c.mounter,

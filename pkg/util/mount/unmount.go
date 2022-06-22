@@ -60,6 +60,22 @@ func UnmountPath(logger *zap.SugaredLogger, mountPath string, mounter Interface)
 	return fmt.Errorf("Failed to unmount path %v", mountPath)
 }
 
+func UnmountFileAndDelete(logger *zap.SugaredLogger, mountPath string, mounter Interface) error {
+	logger.Infof("Unmounting bind mount from %s", mountPath)
+	if err := mounter.Unmount(mountPath); err != nil {
+		logger.Errorf("failed to unmount %s", mountPath)
+		return err
+	}
+
+	logger.Infof("Deleting the file %s", mountPath)
+	if err := os.Remove(mountPath); err != nil {
+		logger.Warn("failed to delete %s", mountPath)
+	}
+
+	logger.Info("Successfully unmounted bind device")
+	return nil
+}
+
 func WaitForDirectoryDeletion(logger *zap.SugaredLogger, mountPath string) error {
 	var err error
 	// Try removing the mount path thrice, else suppress the error

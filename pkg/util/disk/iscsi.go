@@ -103,6 +103,8 @@ type Interface interface {
 	// which in turn checks formatting before mounting. MountWithoutFormat calls the mount.Interface.Mount() method
 	// directly.
 	MountWithoutFormat(source string, target string, fstype string, options []string) error
+
+	UnmountDeviceBindAndDelete(path string) error
 }
 
 // iSCSIMounter implements Interface.
@@ -450,6 +452,10 @@ func mnt(source string, target string, fstype string, options []string, sm *moun
 }
 func (c *iSCSIMounter) UnmountPath(path string) error {
 	return mount.UnmountPath(c.logger, path, c.mounter)
+}
+
+func (c *iSCSIMounter) UnmountDeviceBindAndDelete(path string) error {
+	return mount.UnmountFileAndDelete(c.logger, path, c.mounter)
 }
 
 func (c *iSCSIMounter) Resize(devicePath string, volumePath string) (bool, error) {
