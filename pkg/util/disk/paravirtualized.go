@@ -122,3 +122,7 @@ func (c *pvMounter) GetBlockSizeBytes(devicePath string) (int64, error) {
 	}
 	return getBlockSizeBytes(devicePath, safeMounter)
 }
+
+func (c *pvMounter) MountWithoutFormat(source string, target string, fstype string, options []string) error {
+	return c.mounter.Mount(source, target, fstype, options)
+}
