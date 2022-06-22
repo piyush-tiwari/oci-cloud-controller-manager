@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"go.uber.org/zap"
 	"k8s.io/utils/exec"
@@ -97,6 +98,11 @@ type Interface interface {
 	Rescan(devicePath string) error
 
 	GetBlockSizeBytes(devicePath string) (int64, error)
+
+	// Both iSCSIMounter and pvMounter call Mount through a SafeFormatAndMount struct
+	// which in turn checks formatting before mounting. MountWithoutFormat calls the mount.Interface.Mount() method
+	// directly.
+	MountWithoutFormat(source string, target string, fstype string, options []string) error
 }
 
 // iSCSIMounter implements Interface.
@@ -231,6 +237,51 @@ func GetDiskPathFromMountPath(logger *zap.SugaredLogger, mountPath string) ([]st
 	}
 	logger.Infof("diskByPaths is %v", diskByPaths)
 	return diskByPaths, nil
+}
+
+// Gets the diskPath for a bind-mounted device file
+func GetDiskPathFromBindDeviceFilePath(logger *zap.SugaredLogger, mountPath string) ([]string, error) {
+	mounter := mount.New(logger, mountCommand)
+	findMountOutput, err := mount.FindMount(mounter, mountPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(findMountOutput) != 1 {
+		return nil, errors.New("Didn't find exactly a single bind mount on " + mountPath)
+	}
+
+	for i, v := range findMountOutput {
+		findMountOutput[i] = filepath.Join("/dev/", strings.TrimSuffix(strings.TrimPrefix(v, "udev[/"), "]"))
+	}
+	logger.Infof("The device path is %s", findMountOutput[0])
+
+	diskByPaths := []string{}
+	err = filepath.Walk("/dev/disk/by-path/", func(path string, info os.FileInfo, err error) error {
+		target, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+		if target == findMountOutput[0] {
+			diskByPaths = append(diskByPaths, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(diskByPaths) == 0 {
+		return nil, errors.New("disk by path link not found")
+	}
+
+	logger.Infof("diskByPaths is %v", diskByPaths)
+	return diskByPaths, nil
+}
+
+// Checks if pathname is a device file. False without error if file doesn't exist or is not a device file.
+func PathIsDevice(logger *zap.SugaredLogger, pathname string) (bool, error) {
+	mounter := mount.New(logger, mountCommand)
+	return mounter.PathIsDevice(pathname)
 }
 
 // getISCSIAdmPath gets the absolute path to the iscsiadm executable on the
@@ -434,6 +485,10 @@ func (c *iSCSIMounter) GetBlockSizeBytes(devicePath string) (int64, error) {
 		Logger:    c.logger,
 	}
 	return getBlockSizeBytes(devicePath, safeMounter)
+}
+
+func (c *iSCSIMounter) MountWithoutFormat(source string, target string, fstype string, options []string) error {
+	return c.mounter.Mount(source, target, fstype, options)
 }
 
 func getBlockSizeBytes(devicePath string, sm *mount.SafeFormatAndMount) (int64, error) {

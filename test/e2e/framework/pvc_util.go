@@ -921,6 +921,7 @@ func (j *PVCTestJig) CheckBackupPolicy(bs ocicore.BlockstorageClient, namespace,
 		actualBackupPolicy = *response.Items[0].PolicyId
 	}
 
+	Logf("Expected backup-policy: %s, Actual backup-policy: %s", expectedBackupPolicy, actualBackupPolicy)
 	if actualBackupPolicy != expectedBackupPolicy {
 		Failf("Expected backup policy is %s, got %s", expectedBackupPolicy, actualBackupPolicy)
 	}
