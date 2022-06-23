@@ -386,8 +386,8 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			_ = f.DeleteStorageClass("backup-policy-first")
 		})
 
-		It("create VolumeBackupPolicy :D", func() {
-			pvcJig := framework.NewPVCTestJig(f.ClientSet, "checking-creation-policy")
+		It("creates a User-Defined Backup Policy", func() {
+			pvcJig := framework.NewPVCTestJig(f.ClientSet, "checking-user-defined-policy")
 
 			compartmentId := ""
 			if setupF.Compartment1 != "" {
@@ -413,7 +413,7 @@ var _ = Describe("CSI backup policy addition tests", func() {
 
 			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicyOcid)
 			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
-			_ = f.DeleteStorageClass("backup-policy-first")
+			_ = f.DeleteStorageClass("backup-policy-user-defined")
 			pvcJig.DeleteUserDefinedBackupPolicy(f.BlockStorageClient, backupPolicyOcid)
 		})
 
