@@ -39,6 +39,7 @@ import (
 	"github.com/oracle/oci-cloud-controller-manager/pkg/csi/driver"
 	"github.com/oracle/oci-cloud-controller-manager/pkg/oci/client"
 	"github.com/oracle/oci-cloud-controller-manager/pkg/volume/provisioner/plugin"
+	"github.com/oracle/oci-go-sdk/v50/common"
 	ocicore "github.com/oracle/oci-go-sdk/v50/core"
 )
 
@@ -871,6 +872,43 @@ func (j *PVCTestJig) CheckVolumePerformanceLevel(bs ocicore.BlockstorageClient, 
 
 	if *actual != expectedPerformanceLevel {
 		Failf("Expected volume performance level to be %s but got %s", expectedPerformanceLevel, actual)
+	}
+}
+
+// Creates a dummy user defined backup policy in the given compartment, and returns its ocid. A dummy schedule will be assigned inside.
+func (j *PVCTestJig) CreateUserDefinedBackupPolicy(bs ocicore.BlockstorageClient, name string, compartmentId string) string {
+	request := ocicore.CreateVolumeBackupPolicyRequest{
+		CreateVolumeBackupPolicyDetails: ocicore.CreateVolumeBackupPolicyDetails{
+			CompartmentId: common.String(compartmentId),
+			DisplayName:   common.String(name),
+			Schedules: []ocicore.VolumeBackupSchedule{
+				{
+					BackupType:       ocicore.VolumeBackupScheduleBackupTypeIncremental,
+					HourOfDay:        common.Int(0),
+					OffsetType:       ocicore.VolumeBackupScheduleOffsetTypeStructured,
+					Period:           ocicore.VolumeBackupSchedulePeriodDay,
+					RetentionSeconds: common.Int(3600),
+				},
+			},
+		},
+	}
+
+	resp, err := bs.CreateVolumeBackupPolicy(context.Background(), request)
+	if err != nil {
+		Failf("CreateVolumeBackupPolicy API error: %v", err)
+	}
+
+	return *resp.VolumeBackupPolicy.Id
+}
+
+func (j *PVCTestJig) DeleteUserDefinedBackupPolicy(bs ocicore.BlockstorageClient, id string) {
+	request := ocicore.DeleteVolumeBackupPolicyRequest{
+		PolicyId: common.String(id),
+	}
+
+	_, err := bs.DeleteVolumeBackupPolicy(context.Background(), request)
+	if err != nil {
+		Failf("DeleteVolumeBackupPolicy API error : %v", err)
 	}
 }
 
