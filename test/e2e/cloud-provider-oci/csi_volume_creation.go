@@ -386,6 +386,37 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			_ = f.DeleteStorageClass("backup-policy-first")
 		})
 
+		It("create VolumeBackupPolicy :D", func() {
+			pvcJig := framework.NewPVCTestJig(f.ClientSet, "checking-creation-policy")
+
+			compartmentId := ""
+			if setupF.Compartment1 != "" {
+				compartmentId = setupF.Compartment1
+			} else if f.CloudProviderConfig.CompartmentID != "" {
+				compartmentId = f.CloudProviderConfig.CompartmentID
+			} else if f.CloudProviderConfig.Auth.CompartmentID != "" {
+				compartmentId = f.CloudProviderConfig.Auth.CompartmentID
+			} else {
+				framework.Failf("Compartment Id undefined.")
+			}
+
+			backupPolicyOcid := pvcJig.CreateUserDefinedBackupPolicy(f.BlockStorageClient, "test-policy", compartmentId)
+			framework.Logf("BackupPolicyID : %s", backupPolicyOcid)
+
+			scName := f.CreateStorageClassOrFail("backup-policy-user-defined", "blockvolume.csi.oraclecloud.com",
+				map[string]string{framework.BackupPolicyId: backupPolicyOcid},
+				pvcJig.Labels, "WaitForFirstConsumer", true)
+			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
+			pvcJig.NewPodForCSI("backup-policy-check-ud-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
+
+			time.Sleep(60 * time.Second) //waiting for pod to up and running
+
+			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicyOcid)
+			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
+			_ = f.DeleteStorageClass("backup-policy-first")
+			pvcJig.DeleteUserDefinedBackupPolicy(f.BlockStorageClient, backupPolicyOcid)
+		})
+
 		It("assigns no backup policy when the parameter is not provided", func() {
 			pvcJig := framework.NewPVCTestJig(f.ClientSet, "csi-backup-policy-none")
 
