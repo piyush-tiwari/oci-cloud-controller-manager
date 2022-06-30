@@ -96,6 +96,10 @@ func (c *pvMounter) UnmountPath(path string) error {
 	return mount.UnmountPath(c.logger, path, c.mounter)
 }
 
+func (c *pvMounter) UnmountDeviceBindAndDelete(path string) error {
+	return mount.UnmountFileAndDelete(c.logger, path, c.mounter)
+}
+
 func (c *pvMounter) Resize(devicePath string, volumePath string) (bool, error) {
 	safeMounter := &mount.SafeFormatAndMount{
 		Interface: c.mounter,
@@ -121,4 +125,8 @@ func (c *pvMounter) GetBlockSizeBytes(devicePath string) (int64, error) {
 		Logger:    c.logger,
 	}
 	return getBlockSizeBytes(devicePath, safeMounter)
+}
+
+func (c *pvMounter) MountWithoutFormat(source string, target string, fstype string, options []string) error {
+	return c.mounter.Mount(source, target, fstype, options)
 }

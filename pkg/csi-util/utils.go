@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -43,10 +44,13 @@ const (
 	ociVolumeBackupID = "volume.beta.kubernetes.io/oci-volume-source"
 
 	// Block Volume Performance Units
-	VpusPerGB = "vpusPerGB"
+	VpusPerGB                 = "vpusPerGB"
 	LowCostPerformanceOption  = 0
 	BalancedPerformanceOption = 10
 	HigherPerformanceOption   = 20
+
+	// For Raw Block Volumes, the name of the bind-mounted file inside StagingTargetPath
+	RawBlockStagingFile = "mountfile"
 )
 
 //Util interface
@@ -347,4 +351,38 @@ func RoundUpSize(volumeSizeBytes int64, allocationUnitBytes int64) int64 {
 
 func RoundUpMinSize() int64 {
 	return RoundUpSize(MinimumVolumeSizeInBytes, 1*client.GiB)
+}
+
+// Get the staging target filepath inside the given stagingTargetPath, to be used for raw block volume support
+func GetStagingTargetPathForFile(stagingTargetPath string) string {
+	stagingTargetPathFile := filepath.Join(stagingTargetPath, RawBlockStagingFile)
+	return stagingTargetPathFile
+}
+
+// Creates a file on the specified path after creating the containing directory
+func CreateFilePath(logger *zap.SugaredLogger, path string) error {
+	pathDir := filepath.Dir(path)
+
+	logger.Infof("trying to create surrounding directory %s", pathDir)
+	err := os.MkdirAll(pathDir, 0750)
+	if err != nil {
+		logger.Infof("failed to create surrounding directory %s", pathDir)
+		return err
+	}
+
+	logger.Infof("created surrounding directory, trying to create the target file %s", path)
+	file, fileErr := os.OpenFile(path, os.O_CREATE, 0640)
+	if fileErr != nil && !os.IsExist(fileErr) {
+		logger.Infof("failed to create/open the target file at %s", path)
+		return fileErr
+	}
+
+	fileErr = file.Close()
+	if fileErr != nil {
+		logger.Infof("failed to close %s", path)
+		return fileErr
+	}
+
+	logger.Infof("ensured file at %s", path)
+	return nil
 }

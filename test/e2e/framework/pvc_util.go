@@ -39,6 +39,7 @@ import (
 	"github.com/oracle/oci-cloud-controller-manager/pkg/csi/driver"
 	"github.com/oracle/oci-cloud-controller-manager/pkg/oci/client"
 	"github.com/oracle/oci-cloud-controller-manager/pkg/volume/provisioner/plugin"
+	"github.com/oracle/oci-go-sdk/v50/common"
 	ocicore "github.com/oracle/oci-go-sdk/v50/core"
 )
 
@@ -47,6 +48,7 @@ const (
 	AttachmentTypeISCSI           = "iscsi"
 	AttachmentTypeParavirtualized = "paravirtualized"
 	AttachmentType                = "attachment-type"
+	BackupPolicyId                = "backup-policy-id"
 )
 
 // PVCTestJig is a jig to help create PVC tests.
@@ -870,6 +872,96 @@ func (j *PVCTestJig) CheckVolumePerformanceLevel(bs ocicore.BlockstorageClient, 
 
 	if *actual != expectedPerformanceLevel {
 		Failf("Expected volume performance level to be %s but got %s", expectedPerformanceLevel, actual)
+	}
+}
+
+// Creates a dummy user defined backup policy in the given compartment, and returns its ocid. A dummy schedule will be assigned inside.
+func (j *PVCTestJig) CreateUserDefinedBackupPolicy(bs ocicore.BlockstorageClient, name string, compartmentId string) string {
+	request := ocicore.CreateVolumeBackupPolicyRequest{
+		CreateVolumeBackupPolicyDetails: ocicore.CreateVolumeBackupPolicyDetails{
+			CompartmentId: common.String(compartmentId),
+			DisplayName:   common.String(name),
+			Schedules: []ocicore.VolumeBackupSchedule{
+				{
+					BackupType:       ocicore.VolumeBackupScheduleBackupTypeIncremental,
+					HourOfDay:        common.Int(0),
+					OffsetType:       ocicore.VolumeBackupScheduleOffsetTypeStructured,
+					Period:           ocicore.VolumeBackupSchedulePeriodDay,
+					RetentionSeconds: common.Int(3600),
+				},
+			},
+		},
+	}
+
+	resp, err := bs.CreateVolumeBackupPolicy(context.Background(), request)
+	if err != nil {
+		Failf("CreateVolumeBackupPolicy API error: %v", err)
+	}
+
+	return *resp.VolumeBackupPolicy.Id
+}
+
+func (j *PVCTestJig) DeleteUserDefinedBackupPolicy(bs ocicore.BlockstorageClient, id string) {
+	request := ocicore.DeleteVolumeBackupPolicyRequest{
+		PolicyId: common.String(id),
+	}
+
+	_, err := bs.DeleteVolumeBackupPolicy(context.Background(), request)
+	if err != nil {
+		Failf("DeleteVolumeBackupPolicy API error : %v", err)
+	}
+}
+
+func (j *PVCTestJig) GetOracleDefinedBackupPolicies(bs ocicore.BlockstorageClient) []string {
+	request := ocicore.ListVolumeBackupPoliciesRequest{}
+
+	response, err := bs.ListVolumeBackupPolicies(context.Background(), request)
+	if err != nil {
+		Failf("ListVolumeBackupPolicies API error: %v", err)
+	}
+
+	Expect(response.Items).To(HaveLen(3))
+
+	var backupPolicies []string
+
+	for _, policy := range response.Items {
+		backupPolicies = append(backupPolicies, *policy.Id)
+	}
+
+	return backupPolicies
+}
+
+func (j *PVCTestJig) CheckBackupPolicy(bs ocicore.BlockstorageClient, namespace, name, expectedBackupPolicy string) {
+
+	pvc, err := j.KubeClient.CoreV1().PersistentVolumeClaims(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	volumeName := pvc.Spec.VolumeName
+	// Get the bound PV
+	pv, err := j.KubeClient.CoreV1().PersistentVolumes().Get(context.Background(), volumeName, metav1.GetOptions{})
+	if err != nil {
+		Failf("Failed to get persistent volume %q: %v", volumeName, err)
+	}
+	volumeOCID := pv.Spec.CSI.VolumeHandle
+
+	request := ocicore.GetVolumeBackupPolicyAssetAssignmentRequest{
+		AssetId: &volumeOCID,
+	}
+
+	response, err := bs.GetVolumeBackupPolicyAssetAssignment(context.Background(), request)
+	if err != nil {
+		Failf("GetVolumeBackupPolicyAssetAssignment %q API error: %v", volumeOCID, err)
+	}
+
+	actualBackupPolicy := ""
+
+	// len(Items) is at most 1, empty if no policy assigned
+	if len(response.Items) > 0 {
+		actualBackupPolicy = *response.Items[0].PolicyId
+	}
+
+	Logf("Expected backup-policy: %s, Actual backup-policy: %s", expectedBackupPolicy, actualBackupPolicy)
+	if actualBackupPolicy != expectedBackupPolicy {
+		Failf("Expected backup policy is %s, got %s", expectedBackupPolicy, actualBackupPolicy)
 	}
 }
 
