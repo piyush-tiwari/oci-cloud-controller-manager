@@ -32,7 +32,6 @@ const (
 	timeout                       = time.Minute * 3
 	kmsKey                        = "kms-key-id"
 	attachmentType                = "attachment-type"
-	volumeBackupPolicyId          = "backup-policy-id"
 	attachmentTypeISCSI           = "iscsi"
 	attachmentTypeParavirtualized = "paravirtualized"
 	initialFreeformTagsOverride   = "oci.oraclecloud.com/initial-freeform-tags-override"
@@ -61,8 +60,6 @@ type VolumeParameters struct {
 	definedTags map[string]map[string]interface{}
 	//volume performance units per gb describes the block volume performance level
 	vpusPerGB int64
-	// The OCID of the backup policy to be assigned to the volume
-	backupPolicyId string
 }
 
 // VolumeAttachmentOption holds config for attachments
@@ -78,7 +75,6 @@ func extractVolumeParameters(parameters map[string]string) (VolumeParameters, er
 		diskEncryptionKey:   "",
 		attachmentParameter: make(map[string]string),
 		vpusPerGB:           10, // default value is 10 -> Balanced
-		backupPolicyId:      "",
 	}
 	for k, v := range parameters {
 		switch k {
@@ -124,11 +120,6 @@ func extractVolumeParameters(parameters map[string]string) (VolumeParameters, er
 				return p, status.Error(codes.InvalidArgument, err.Error())
 			}
 			p.vpusPerGB = vpusPerGB
-
-		case volumeBackupPolicyId:
-			if v != "" {
-				p.backupPolicyId = v
-			}
 		}
 
 	}
@@ -262,7 +253,7 @@ func (d *ControllerDriver) CreateVolume(ctx context.Context, req *csi.CreateVolu
 		}
 
 		provisionedVolume, err = provision(log, d.client, volumeName, size, *ad.Name, d.config.CompartmentID, "",
-			volumeParams.diskEncryptionKey, volumeParams.vpusPerGB, volumeParams.backupPolicyId, timeout, bvTags)
+			volumeParams.diskEncryptionKey, volumeParams.vpusPerGB, timeout, bvTags)
 		if err != nil {
 			log.With("Ad name", *ad.Name, "Compartment Id", d.config.CompartmentID).Error("New volume creation failed %s", err)
 			errorType = util.GetError(err)
@@ -819,7 +810,7 @@ func (d *ControllerDriver) ControllerGetVolume(ctx context.Context, req *csi.Con
 }
 
 func provision(log *zap.SugaredLogger, c client.Interface, volName string, volSize int64, availDomainName, compartmentID,
-	backupID, kmsKeyID string, vpusPerGB int64, backupPolicyID string, timeout time.Duration, bvTags *config.TagConfig) (core.Volume, error) {
+	backupID, kmsKeyID string, vpusPerGB int64, timeout time.Duration, bvTags *config.TagConfig) (core.Volume, error) {
 
 	ctx := context.Background()
 
@@ -839,10 +830,6 @@ func provision(log *zap.SugaredLogger, c client.Interface, volName string, volSi
 
 	if backupID != "" {
 		volumeDetails.SourceDetails = &core.VolumeSourceFromVolumeBackupDetails{Id: &backupID}
-	}
-
-	if backupPolicyID != "" {
-		volumeDetails.BackupPolicyId = &backupPolicyID
 	}
 
 	if kmsKeyID != "" {
