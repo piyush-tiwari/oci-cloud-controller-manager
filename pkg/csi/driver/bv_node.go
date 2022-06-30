@@ -448,6 +448,7 @@ func (d BlockVolumeNodeDriver) NodeUnpublishVolume(ctx context.Context, req *csi
 	isRawBlockVolume, checkErr := disk.PathIsDevice(logger, req.TargetPath)
 	if checkErr != nil {
 		logger.Errorf("failed to check if %s is a device file", req.TargetPath)
+		return nil, status.Errorf(codes.Internal, checkErr.Error())
 	}
 
 	if acquired := d.volumeLocks.TryAcquire(req.VolumeId); !acquired {
@@ -618,6 +619,44 @@ func (d BlockVolumeNodeDriver) NodeGetVolumeStats(ctx context.Context, req *csi.
 		return nil, status.Error(codes.InvalidArgument, "volume path must be provided")
 	}
 
+	isRawBlockVolume := false
+	isDevice, err := disk.PathIsDevice(logger, volumePath)
+	if err != nil {
+		logger.With(zap.Error(err)).Errorf("failed to check if the volumePath is a Device %s", volumePath)
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	if isDevice {
+		isRawBlockVolume = true
+	} else {
+		isDevice, err = disk.PathIsDevice(logger, csi_util.GetStagingTargetPathForFile(volumePath))
+		if err != nil {
+			logger.With(zap.Error(err)).Errorf("failed to check if the volumePathFile is a Device %s", volumePath)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+		if isDevice {
+			isRawBlockVolume = true
+			volumePath = csi_util.GetStagingTargetPathForFile(volumePath)
+		}
+	}
+
+	if isRawBlockVolume {
+		metricsProvider := volume.NewMetricsBlock(volumePath)
+		metrics, err := metricsProvider.GetMetrics()
+		if err != nil {
+			logger.With(zap.Error(err)).Errorf("failed to get metrics for device at %s", volumePath)
+			return nil, status.Error(codes.Internal, err.Error())
+		}
+
+		return &csi.NodeGetVolumeStatsResponse{
+			Usage: []*csi.VolumeUsage{
+				{
+					Unit:  csi.VolumeUsage_BYTES,
+					Total: metrics.Capacity.AsDec().UnscaledBig().Int64(),
+				},
+			},
+		}, nil
+	}
+
 	hostUtil := hostutil.NewHostUtil()
 	exists, err := hostUtil.PathExists(volumePath)
 	if err != nil {
@@ -687,6 +726,7 @@ func (d BlockVolumeNodeDriver) NodeExpandVolume(ctx context.Context, req *csi.No
 	isRawBlockVolume, err := disk.PathIsDevice(logger, volumePath)
 	if err != nil {
 		logger.With(zap.Error(err)).Errorf("couldn't check if volumePath has a device file %s", volumePath)
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 
 	var diskPath []string
@@ -723,6 +763,7 @@ func (d BlockVolumeNodeDriver) NodeExpandVolume(ctx context.Context, req *csi.No
 		diskPath, err = disk.GetDiskPathFromBindDeviceFilePath(d.logger, volumePath)
 		if err != nil {
 			logger.With(zap.Error(err)).Errorf("unable to get disk paths from volumePath %s", volumePath)
+			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}
 
