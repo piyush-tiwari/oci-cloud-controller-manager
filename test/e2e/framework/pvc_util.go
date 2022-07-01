@@ -39,6 +39,7 @@ import (
 	"github.com/oracle/oci-cloud-controller-manager/pkg/csi/driver"
 	"github.com/oracle/oci-cloud-controller-manager/pkg/oci/client"
 	"github.com/oracle/oci-cloud-controller-manager/pkg/volume/provisioner/plugin"
+	"github.com/oracle/oci-go-sdk/v50/common"
 	ocicore "github.com/oracle/oci-go-sdk/v50/core"
 )
 
@@ -47,6 +48,7 @@ const (
 	AttachmentTypeISCSI           = "iscsi"
 	AttachmentTypeParavirtualized = "paravirtualized"
 	AttachmentType                = "attachment-type"
+	BackupPolicyId                = "backup-policy-id"
 )
 
 // PVCTestJig is a jig to help create PVC tests.
@@ -494,8 +496,68 @@ func (j *PVCTestJig) CreateVolume(bs ocicore.BlockstorageClient, adLabel string,
 // creates the Pod. Attaches PVC to the Pod which is created by CSI
 func (j *PVCTestJig) NewPodForCSI(name string, namespace string, claimName string, adLabel string) string {
 	By("Creating a pod with the claiming PVC created by CSI")
+	shCmd := "echo 'Hello World' > /data/testdata.txt; while true; do echo $(date -u) >> /data/out.txt; sleep 5; done"
+	podTemplate := j.createPodTemplateForCSIBlock(name, namespace, claimName, adLabel, "/data", centos, shCmd, false)
+	return j.createNewPodWithTemplate(namespace, podTemplate)
+}
 
-	pod, err := j.KubeClient.CoreV1().Pods(namespace).Create(context.Background(), &v1.Pod{
+// Creates a new pod with a raw device mount at /dev/block. Writes "Hello World" to the first block of the volume.
+func (j *PVCTestJig) NewPodForRawCSI(name string, namespace string, claimName string, adLabel string) string {
+	shCmd := "echo 'Hello World' > /dev/test.txt; dd if=/dev/test.txt of=/dev/block count=1; while true; do sleep 5; done"
+	podTemplate := j.createPodTemplateForCSIBlock(name, namespace, claimName, adLabel, "/dev/block", "busybox", shCmd, true)
+	return j.createNewPodWithTemplate(namespace, podTemplate)
+}
+
+// Create a new pod in the namespace provided using the template specification, and await its creation and running
+func (j *PVCTestJig) createNewPodWithTemplate(namespace string, podTemplate v1.Pod) string {
+	pod, err := j.KubeClient.CoreV1().Pods(namespace).Create(context.Background(), &podTemplate, metav1.CreateOptions{})
+	if err != nil {
+		Failf("Pod %q Create API error: %v", pod.Name, err)
+	}
+
+	// Waiting for pod to be running
+	err = j.waitTimeoutForPodRunningInNamespace(pod.Name, namespace, slowPodStartTimeout)
+	if err != nil {
+		Failf("Pod %q is not Running: %v", pod.Name, err)
+	}
+	zap.S().With(pod.Namespace).With(pod.Name).Info("CSI POD is created.")
+	return pod.Name
+}
+
+// Create a Pod Template with the supplied arguments. isRawBlock determines wheter the supplied volumePath should be
+// seen as a devicePath or mountPath, shCmd is the command ran by /bin/sh inside the container
+func (j *PVCTestJig) createPodTemplateForCSIBlock(name, namespace, claimName, adLabel, volumePath, image, shCmd string, isRawBlock bool) v1.Pod {
+	var container v1.Container
+
+	if isRawBlock {
+		container = v1.Container{
+			Name:    name,
+			Image:   image,
+			Command: []string{"/bin/sh"},
+			Args:    []string{"-c", shCmd},
+			VolumeDevices: []v1.VolumeDevice{
+				{
+					Name:       "persistent-storage",
+					DevicePath: volumePath,
+				},
+			},
+		}
+	} else {
+		container = v1.Container{
+			Name:    name,
+			Image:   image,
+			Command: []string{"/bin/sh"},
+			Args:    []string{"-c", shCmd},
+			VolumeMounts: []v1.VolumeMount{
+				{
+					Name:      "persistent-storage",
+					MountPath: volumePath,
+				},
+			},
+		}
+	}
+
+	return v1.Pod{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "Pod",
 			APIVersion: "v1",
@@ -506,18 +568,7 @@ func (j *PVCTestJig) NewPodForCSI(name string, namespace string, claimName strin
 		},
 		Spec: v1.PodSpec{
 			Containers: []v1.Container{
-				{
-					Name:    name,
-					Image:   centos,
-					Command: []string{"/bin/sh"},
-					Args:    []string{"-c", "echo 'Hello World' > /data/testdata.txt; while true; do echo $(date -u) >> /data/out.txt; sleep 5; done"},
-					VolumeMounts: []v1.VolumeMount{
-						{
-							Name:      "persistent-storage",
-							MountPath: "/data",
-						},
-					},
-				},
+				container,
 			},
 			Volumes: []v1.Volume{
 				{
@@ -533,18 +584,7 @@ func (j *PVCTestJig) NewPodForCSI(name string, namespace string, claimName strin
 				plugin.LabelZoneFailureDomain: adLabel,
 			},
 		},
-	}, metav1.CreateOptions{})
-	if err != nil {
-		Failf("Pod %q Create API error: %v", pod.Name, err)
 	}
-
-	// Waiting for pod to be running
-	err = j.waitTimeoutForPodRunningInNamespace(pod.Name, namespace, slowPodStartTimeout)
-	if err != nil {
-		Failf("Pod %q is not Running: %v", pod.Name, err)
-	}
-	zap.S().With(pod.Namespace).With(pod.Name).Info("CSI POD is created.")
-	return pod.Name
 }
 
 // NewPodForCSIFSSWrite returns the CSI Fss template for this jig,
@@ -870,6 +910,96 @@ func (j *PVCTestJig) CheckVolumePerformanceLevel(bs ocicore.BlockstorageClient, 
 
 	if *actual != expectedPerformanceLevel {
 		Failf("Expected volume performance level to be %s but got %s", expectedPerformanceLevel, actual)
+	}
+}
+
+// Creates a dummy user defined backup policy in the given compartment, and returns its ocid. A dummy schedule will be assigned inside.
+func (j *PVCTestJig) CreateUserDefinedBackupPolicy(bs ocicore.BlockstorageClient, name string, compartmentId string) string {
+	request := ocicore.CreateVolumeBackupPolicyRequest{
+		CreateVolumeBackupPolicyDetails: ocicore.CreateVolumeBackupPolicyDetails{
+			CompartmentId: common.String(compartmentId),
+			DisplayName:   common.String(name),
+			Schedules: []ocicore.VolumeBackupSchedule{
+				{
+					BackupType:       ocicore.VolumeBackupScheduleBackupTypeIncremental,
+					HourOfDay:        common.Int(0),
+					OffsetType:       ocicore.VolumeBackupScheduleOffsetTypeStructured,
+					Period:           ocicore.VolumeBackupSchedulePeriodDay,
+					RetentionSeconds: common.Int(3600),
+				},
+			},
+		},
+	}
+
+	resp, err := bs.CreateVolumeBackupPolicy(context.Background(), request)
+	if err != nil {
+		Failf("CreateVolumeBackupPolicy API error: %v", err)
+	}
+
+	return *resp.VolumeBackupPolicy.Id
+}
+
+func (j *PVCTestJig) DeleteUserDefinedBackupPolicy(bs ocicore.BlockstorageClient, id string) {
+	request := ocicore.DeleteVolumeBackupPolicyRequest{
+		PolicyId: common.String(id),
+	}
+
+	_, err := bs.DeleteVolumeBackupPolicy(context.Background(), request)
+	if err != nil {
+		Failf("DeleteVolumeBackupPolicy API error : %v", err)
+	}
+}
+
+func (j *PVCTestJig) GetOracleDefinedBackupPolicies(bs ocicore.BlockstorageClient) []string {
+	request := ocicore.ListVolumeBackupPoliciesRequest{}
+
+	response, err := bs.ListVolumeBackupPolicies(context.Background(), request)
+	if err != nil {
+		Failf("ListVolumeBackupPolicies API error: %v", err)
+	}
+
+	Expect(response.Items).To(HaveLen(3))
+
+	var backupPolicies []string
+
+	for _, policy := range response.Items {
+		backupPolicies = append(backupPolicies, *policy.Id)
+	}
+
+	return backupPolicies
+}
+
+func (j *PVCTestJig) CheckBackupPolicy(bs ocicore.BlockstorageClient, namespace, name, expectedBackupPolicy string) {
+
+	pvc, err := j.KubeClient.CoreV1().PersistentVolumeClaims(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	Expect(err).NotTo(HaveOccurred())
+	volumeName := pvc.Spec.VolumeName
+	// Get the bound PV
+	pv, err := j.KubeClient.CoreV1().PersistentVolumes().Get(context.Background(), volumeName, metav1.GetOptions{})
+	if err != nil {
+		Failf("Failed to get persistent volume %q: %v", volumeName, err)
+	}
+	volumeOCID := pv.Spec.CSI.VolumeHandle
+
+	request := ocicore.GetVolumeBackupPolicyAssetAssignmentRequest{
+		AssetId: &volumeOCID,
+	}
+
+	response, err := bs.GetVolumeBackupPolicyAssetAssignment(context.Background(), request)
+	if err != nil {
+		Failf("GetVolumeBackupPolicyAssetAssignment %q API error: %v", volumeOCID, err)
+	}
+
+	actualBackupPolicy := ""
+
+	// len(Items) is at most 1, empty if no policy assigned
+	if len(response.Items) > 0 {
+		actualBackupPolicy = *response.Items[0].PolicyId
+	}
+
+	Logf("Expected backup-policy: %s, Actual backup-policy: %s", expectedBackupPolicy, actualBackupPolicy)
+	if actualBackupPolicy != expectedBackupPolicy {
+		Failf("Expected backup policy is %s, got %s", expectedBackupPolicy, actualBackupPolicy)
 	}
 }
 
