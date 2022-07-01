@@ -198,6 +198,44 @@ func (j *PVCTestJig) CheckUsableVolumeSizeInsidePod(namespace string, podName st
 
 }
 
+// Checks that the size of the raw block volume attached is equal to 60 Gi,
+// and checks if "Hello World" is present in the first block of the volume.
+func (j *PVCTestJig) CheckExpandedSizeAndDataForRawVolume(namespace string, podName string) {
+	command := "blockdev --getsize64 /dev/block"
+
+	if pollErr := wait.PollImmediate(K8sResourcePoll, DefaultTimeout, func() (bool, error) {
+		stdout, err := RunHostCmd(namespace, podName, command)
+		if err != nil {
+			Logf("got err: %v, retry until timeout", err)
+			return false, nil
+		}
+		if strings.TrimSpace(stdout) != "64424509440" {
+			return false, nil
+		} else {
+			return true, nil
+		}
+	}); pollErr != nil {
+		Failf("Unexpected size observed inside pod '%v' after expanding pvc", podName)
+	}
+
+	command = "dd if=/dev/block count=1 status=none"
+	if pollErr := wait.PollImmediate(K8sResourcePoll, DefaultTimeout, func() (bool, error) {
+		stdout, err := RunHostCmd(namespace, podName, command)
+		if err != nil {
+			Logf("got err: %v, retry until timeout", err)
+			return false, nil
+		}
+
+		if !strings.Contains(stdout, "Hello World") {
+			return false, nil
+		} else {
+			return true, nil
+		}
+	}); pollErr != nil {
+		Failf("Write Test failed in pod '%v' after expanding pvc", podName)
+	}
+}
+
 // CreateAndAwaitNginxPodOrFail returns a pod definition based on the namespace using nginx image
 func (j *PVCTestJig) CreateAndAwaitNginxPodOrFail(ns string, pvc *v1.PersistentVolumeClaim, command string) string {
 	By("Creating a pod with the dynamically provisioned volume")

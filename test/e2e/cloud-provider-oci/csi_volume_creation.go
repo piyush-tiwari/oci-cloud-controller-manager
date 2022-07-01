@@ -17,6 +17,7 @@ package e2e
 import (
 	"time"
 
+	v1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 
 	. "github.com/onsi/ginkgo"
@@ -379,7 +380,7 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
 			pvcJig.NewPodForCSI("backup-policy-check-first-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
 
-			time.Sleep(60 * time.Second) //waiting for pod to up and running
+			// time.Sleep(60 * time.Second) //waiting for pod to up and running
 
 			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicies[0])
 			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
@@ -409,7 +410,7 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
 			pvcJig.NewPodForCSI("backup-policy-check-ud-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
 
-			time.Sleep(60 * time.Second) //waiting for pod to up and running
+			// time.Sleep(60 * time.Second) //waiting for pod to up and running
 
 			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicyOcid)
 			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
@@ -424,7 +425,7 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
 			pvcJig.NewPodForCSI("backup-policy-check-none-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
 
-			time.Sleep(60 * time.Second) //waiting for pod to up and running
+			// time.Sleep(60 * time.Second) //waiting for pod to up and running
 
 			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, "")
 			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
@@ -440,7 +441,7 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
 			pvcJig.NewPodForCSI("backup-policy-check-empty-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
 
-			time.Sleep(60 * time.Second) //waiting for pod to up and running
+			// time.Sleep(60 * time.Second) //waiting for pod to up and running
 
 			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, "")
 			f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
@@ -458,7 +459,7 @@ var _ = Describe("CSI backup policy addition tests", func() {
 			pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, nil)
 			podName := pvcJig.NewPodForCSI("backup-policy-check-expand-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
 
-			time.Sleep(60 * time.Second) //waiting for pod to up and running
+			// time.Sleep(60 * time.Second) //waiting for pod to up and running
 			pvcJig.CheckBackupPolicy(f.BlockStorageClient, pvc.Namespace, pvc.Name, backupPolicies[0])
 
 			expandedPvc := pvcJig.UpdateAndAwaitPVCOrFailCSI(pvc, pvc.Namespace, size, nil)
@@ -476,3 +477,46 @@ var _ = Describe("CSI backup policy addition tests", func() {
 		})
 	})
 })
+
+var _ = Describe("CSI raw block volume tests", func() {
+	f := framework.NewBackupFramework("csi-raw")
+
+	Context("[cloudprovider][storage][csi][raw-block]", func() {
+		It("can publish a raw block volume and expand its size [iscsi]", func() {
+			TestRawBlockProvisionAndExpansion(f, framework.AttachmentTypeISCSI)
+		})
+
+		It("can publish a raw block volume and expand its size [paravirtualized]", func() {
+			TestRawBlockProvisionAndExpansion(f, framework.AttachmentTypeParavirtualized)
+		})
+	})
+})
+
+func TestRawBlockProvisionAndExpansion(f *framework.CloudProviderFramework, attachmentType string) {
+	pvcJig := framework.NewPVCTestJig(f.ClientSet, "csi-raw-block-expand")
+
+	By("creating a Custom Storage Class")
+	scName := f.CreateStorageClassOrFail("raw-sc", "blockvolume.csi.oraclecloud.com",
+		map[string]string{framework.AttachmentType: attachmentType},
+		pvcJig.Labels, "WaitForFirstConsumer", true)
+
+	By("creating a PVC with VolumeMode - Block")
+	tweakFunc := func(pvc *v1.PersistentVolumeClaim) {
+		blockMode := v1.PersistentVolumeBlock
+		pvc.Spec.VolumeMode = &blockMode
+	}
+	pvc := pvcJig.CreateAndAwaitPVCOrFailCSI(f.Namespace.Name, framework.MinVolumeBlock, scName, tweakFunc)
+
+	By("creating a new pod")
+	podName := pvcJig.NewPodForRawCSI("raw-check-app", f.Namespace.Name, pvc.Name, setupF.AdLabel)
+
+	By("expanding the size in PVC")
+	expandedPvc := pvcJig.UpdateAndAwaitPVCOrFailCSI(pvc, pvc.Namespace, "60Gi", nil)
+	time.Sleep(120 * time.Second) // Wait for volume rescan
+
+	By("checking the expanded size and already written data")
+	pvcJig.CheckVolumeCapacity("60Gi", expandedPvc.Name, f.Namespace.Name)
+	pvcJig.CheckExpandedSizeAndDataForRawVolume(f.Namespace.Name, podName)
+	f.VolumeIds = append(f.VolumeIds, pvc.Spec.VolumeName)
+	_ = f.DeleteStorageClass("raw-sc")
+}
